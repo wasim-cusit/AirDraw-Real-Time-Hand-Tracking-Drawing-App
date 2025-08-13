@@ -1,199 +1,303 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>AirDraw — Fullscreen Hand Tracking</title>
 <style>
-:root {
-  --panel-bg: rgba(15, 23, 42, 0.7);
-  --panel-border: rgba(255,255,255,0.12);
-  --text: #e5e7eb;
-  --muted: #94a3b8;
-  --accent: #7c3aed;
-}
-* { box-sizing: border-box; }
-html, body { margin:0; padding:0; height:100%; background:#0b1220; color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-#stage { position:fixed; inset:0; width:100vw; height:100vh; background:#000; overflow:hidden; touch-action:none; }
-video, canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; touch-action:none; }
-.hud { position:absolute; left:12px; right:12px; bottom:env(safe-area-inset-bottom,12px); display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:center; z-index:10; pointer-events:none; }
-.pill, .btn { pointer-events:auto; background:var(--panel-bg); border:1px solid var(--panel-border); backdrop-filter:blur(10px); color:var(--text); border-radius:12px; }
-.pill { display:flex; align-items:center; gap:10px; padding:8px 10px; flex-wrap:wrap; }
-.btn { padding:10px 14px; cursor:pointer; user-select:none; }
-.btn:active { transform:translateY(1px); }
-.pill label { font-size:12px; color:var(--muted); }
-input[type="color"]{width:36px;height:36px;border:none;border-radius:8px;background:transparent;}
-input[type="range"]{width:110px;}
-.tagbar{position:absolute; top:10px; left:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; z-index:10;}
-.tag{background:var(--panel-bg); border:1px solid var(--panel-border); padding:6px 10px; border-radius:999px; font-size:12px; color:var(--muted);}
-#startGate{position:absolute; inset:0; display:grid; place-items:center; background:linear-gradient(180deg, rgba(124,58,237,.2), rgba(2,6,23,.9)); z-index:20;}
-#startGate .card{background:rgba(2,6,23,.85); border:1px solid var(--panel-border); padding:18px; border-radius:14px; text-align:center; max-width:360px;}
-#startGate h1{margin:0 0 8px; font-size:18px;}
-#startGate p{margin:0 0 14px; color:var(--muted); font-size:13px;}
-#startBtn{background:var(--accent); border:none; color:white; padding:10px 16px; border-radius:10px; cursor:pointer;}
-.topright{position:absolute; top:12px; right:12px; z-index:15;}
-.topright .btn{pointer-events:auto;}
-@media(max-width:768px){ input[type="range"]{width:140px;} .btn{padding:12px 16px;} }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%; background: black;
+    overflow: hidden;
+  }
+  video, canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  #controls {
+    position: fixed;
+    bottom: 10px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.5);
+    padding: 8px;
+    border-radius: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    z-index: 10;
+  }
+  #controls input[type=color] {
+    width: 40px; height: 40px; border: none;
+  }
+  #controls input[type=range] {
+    width: 100px;
+  }
+  #controls button {
+    background: #333; color: white;
+    border: none; padding: 8px 14px;
+    font-size: 16px; cursor: pointer;
+    border-radius: 8px;
+    min-width: 70px;
+  }
 </style>
 </head>
 <body>
-<div id="stage">
-  <video id="video" playsinline autoplay muted></video>
-  <canvas id="overlay"></canvas>
-  <canvas id="ink"></canvas>
 
-  <div id="startGate">
-    <div class="card">
-      <h1>AirDraw</h1>
-      <p>Tap start, allow camera access, then <b>pinch thumb + index</b> to draw in the air.</p>
-      <button id="startBtn">Start Camera</button>
-    </div>
-  </div>
+<video id="input" playsinline></video>
+<canvas id="overlay"></canvas>
+<canvas id="ink"></canvas>
 
-  <div class="tagbar">
-    <div class="tag">Pinch to draw</div>
-    <div class="tag"><span id="fps">FPS: —</span></div>
-    <div class="tag" id="status">Loading…</div>
-  </div>
-
-  <div class="topright">
-    <button class="btn"><a href="./camera.html" style="color:inherit;text-decoration:none;">New Camera</a></button>
-  </div>
-
-  <div class="hud">
-    <div class="pill">
-      <label>Color</label><input id="color" type="color" value="#7c3aed">
-      <label>Size</label><input id="size" type="range" min="2" max="24" value="6">
-      <label>Smooth</label><input id="smooth" type="checkbox" checked>
-      <label>Mirror</label><input id="mirror" type="checkbox" checked>
-    </div>
-    <button class="btn" id="undoBtn" title="Undo (U)">Undo</button>
-    <button class="btn" id="clearBtn" title="Clear (C)">Clear</button>
-    <button class="btn" id="saveBtn" title="Save (S)">Save</button>
-  </div>
+<div id="controls">
+  <input type="color" id="color" value="#ff2d55" />
+  <input type="range" id="size" min="2" max="20" value="6" />
+  <input type="range" id="zoom" min="50" max="150" value="100" title="Zoom Level" />
+  <button id="undoBtn">Undo</button>
+  <button id="clearBtn">Clear</button>
+  <button id="saveBtn">Save</button>
+  <button id="switchBtn">Switch Camera</button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
 <script>
-(() => {
-const video = document.getElementById('video');
-const overlay = document.getElementById('overlay');
-const ink = document.getElementById('ink');
-const octx = overlay.getContext('2d');
-const ictx = ink.getContext('2d');
+(async function(){
+  const video = document.getElementById('input');
+  const overlay = document.getElementById('overlay');
+  const ink = document.getElementById('ink');
+  const octx = overlay.getContext('2d');
+  const ictx = ink.getContext('2d');
 
-const startGate = document.getElementById('startGate');
-const startBtn = document.getElementById('startBtn');
-const colorEl = document.getElementById('color');
-const sizeEl = document.getElementById('size');
-const smoothEl = document.getElementById('smooth');
-const mirrorEl = document.getElementById('mirror');
-const undoBtn = document.getElementById('undoBtn');
-const clearBtn = document.getElementById('clearBtn');
-const saveBtn = document.getElementById('saveBtn');
-const fpsEl = document.getElementById('fps');
-const statusEl = document.getElementById('status');
+  const colorEl = document.getElementById('color');
+  const sizeEl = document.getElementById('size');
+  const zoomEl = document.getElementById('zoom');
+  const undoBtn = document.getElementById('undoBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const saveBtn = document.getElementById('saveBtn');
+  const switchBtn = document.getElementById('switchBtn');
 
-let strokes = [], currentStroke = null, lastPoint = null, pinchDown = false, emaPoint = null;
-const alpha = 0.5;
-let frames = 0, lastT = performance.now();
+  let strokes = [];
+  let currentStroke = null;
+  let lastPos = null;
+  let drawing = false;
+  let currentFacingMode = "user";
+  let stream = null;
 
-function resizeAll(){
-  const w = window.innerWidth, h = window.innerHeight;
-  const dpr = window.devicePixelRatio || 1;
-  overlay.width = w*dpr; overlay.height = h*dpr; overlay.style.width = w+'px'; overlay.style.height = h+'px';
-  ink.width = w*dpr; ink.height = h*dpr; ink.style.width = w+'px'; ink.style.height = h+'px';
-  octx.setTransform(1,0,0,1,0,0); ictx.setTransform(1,0,0,1,0,0);
-  octx.scale(dpr,dpr); ictx.scale(dpr,dpr);
-}
-window.addEventListener('resize', resizeAll);
-window.addEventListener('orientationchange', ()=>setTimeout(resizeAll,50));
-resizeAll();
+  function resizeCanvas(){
+    overlay.width = window.innerWidth;
+    overlay.height = window.innerHeight;
+    ink.width = window.innerWidth;
+    ink.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
 
-function tickFPS(){ frames++; const now=performance.now(); if(now-lastT>=1000){ fpsEl.textContent=`FPS: ${frames}`; frames=0; lastT=now; } }
-function applyMirror(){ video.style.transform = mirrorEl.checked?'scaleX(-1)':'scaleX(1)'; }
-mirrorEl.addEventListener('change', applyMirror); applyMirror();
+  function toCanvasCoords(norm) {
+    return {
+      x: norm.x * overlay.width,
+      y: norm.y * overlay.height
+    };
+  }
 
-function toCanvasXY(norm){
-  let x = norm.x * window.innerWidth;
-  let y = norm.y * window.innerHeight;
-  if(mirrorEl.checked) x = window.innerWidth - x;
-  return {x,y};
-}
+  function pinchActive(landmarks) {
+    const t = landmarks[4];
+    const i = landmarks[8];
+    const dx = t.x - i.x;
+    const dy = t.y - i.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    return dist < 0.06;
+  }
 
-function pinchDetector(landmarks){
-  const t=landmarks[4], i=landmarks[8];
-  const dist=Math.hypot(t.x-i.x, t.y-i.y);
-  const START = 0.1, END = 0.15;
-  if(!pinchDown && dist<START) pinchDown=true;
-  if(pinchDown && dist>END) pinchDown=false;
-  return pinchDown;
-}
-
-function redrawAll(){
-  ictx.clearRect(0,0,ink.width,ink.height);
-  ictx.lineCap='round'; ictx.lineJoin='round';
-  for(const s of strokes){
-    if(s.points.length<2) continue;
+  function drawLine(p1, p2, color, size) {
+    ictx.strokeStyle = color;
+    ictx.lineWidth = size;
+    ictx.lineCap = "round";
     ictx.beginPath();
-    ictx.strokeStyle=s.color; ictx.lineWidth=s.size;
-    for(let i=1;i<s.points.length;i++){
-      const a=s.points[i-1], b=s.points[i];
-      ictx.moveTo(a.x,a.y); ictx.lineTo(b.x,b.y);
-    }
+    ictx.moveTo(p1.x, p1.y);
+    ictx.lineTo(p2.x, p2.y);
     ictx.stroke();
   }
-}
 
-undoBtn.onclick = () => { strokes.pop(); redrawAll(); };
-clearBtn.onclick = () => { strokes=[]; redrawAll(); };
-saveBtn.onclick = () => {
-  const w=ink.width,h=ink.height; const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
-  const tctx=tmp.getContext('2d');
-  tctx.drawImage(video,0,0,w,h); tctx.drawImage(ink,0,0);
-  const a=document.createElement('a'); a.href=tmp.toDataURL('image/png'); a.download='airdraw.png'; a.click();
-};
+  undoBtn.onclick = () => {
+    strokes.pop();
+    redrawAll();
+  };
+  clearBtn.onclick = () => {
+    strokes = [];
+    ictx.clearRect(0,0,ink.width,ink.height);
+  };
+  saveBtn.onclick = () => {
+    const link = document.createElement('a');
+    const merged = document.createElement('canvas');
+    merged.width = ink.width;
+    merged.height = ink.height;
+    const mctx = merged.getContext('2d');
+    mctx.drawImage(video, 0, 0, merged.width, merged.height);
+    mctx.drawImage(ink, 0, 0);
+    link.href = merged.toDataURL("image/png");
+    link.download = "airdraw.png";
+    link.click();
+  };
+  switchBtn.onclick = () => {
+    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
+    initCamera();
+  };
+  
+  zoomEl.addEventListener('input', () => {
+    if (stream) {
+      const track = stream.getVideoTracks()[0];
+      if (track && typeof track.getCapabilities === 'function') {
+        const capabilities = track.getCapabilities();
+        const settings = track.getSettings();
+        
+        if (capabilities.zoom) {
+          const zoom = parseInt(zoomEl.value) / 100;
+          const zoomRange = capabilities.zoom.max - capabilities.zoom.min;
+          const zoomValue = capabilities.zoom.min + (zoom * zoomRange);
+          track.applyConstraints({
+            advanced: [{ zoom: Math.min(Math.max(zoomValue, capabilities.zoom.min), capabilities.zoom.max) }]
+          });
+        }
+      }
+    }
+  });
 
-const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-hands.setOptions({ maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.6, minTrackingConfidence:0.6 });
+  function redrawAll(){
+    ictx.clearRect(0,0,ink.width,ink.height);
+    for (const s of strokes) {
+      for (let i = 1; i < s.points.length; i++) {
+        drawLine(s.points[i-1], s.points[i], s.color, s.size);
+      }
+    }
+  }
 
-hands.onResults(res=>{
-  tickFPS(); octx.clearRect(0,0,overlay.width,overlay.height);
-  if(res.multiHandLandmarks && res.multiHandLandmarks.length){
-    const lm = res.multiHandLandmarks[0];
-    drawConnectors(octx,lm,HAND_CONNECTIONS,{lineWidth:2});
-    drawLandmarks(octx,lm,{lineWidth:1,radius:2});
-    let tip = toCanvasXY(lm[8]);
-    if(!emaPoint) emaPoint = {...tip};
-    if(smoothEl.checked){ emaPoint.x+=alpha*(tip.x-emaPoint.x); emaPoint.y+=alpha*(tip.y-emaPoint.y);} else emaPoint={...tip};
+  function drawHandSkeleton(lm){
+    octx.lineWidth = 2;
+    octx.strokeStyle = "rgba(0,255,255,0.6)";
+    octx.fillStyle = "rgba(255,255,0,0.9)";
+    // Draw connections
+    const fingers = [
+      [0,1,2,3,4],
+      [0,5,6,7,8],
+      [0,9,10,11,12],
+      [0,13,14,15,16],
+      [0,17,18,19,20]
+    ];
+    fingers.forEach(f=>{
+      for(let i=0;i<f.length-1;i++){
+        const p1 = toCanvasCoords(lm[f[i]]);
+        const p2 = toCanvasCoords(lm[f[i+1]]);
+        octx.beginPath();
+        octx.moveTo(p1.x, p1.y);
+        octx.lineTo(p2.x, p2.y);
+        octx.stroke();
+      }
+    });
+    // Draw points
+    lm.forEach((pt, index) => {
+      const pos = toCanvasCoords(pt);
+      octx.beginPath();
+      octx.arc(pos.x, pos.y, index===8 || index===4 ? 6 : 4, 0, Math.PI*2);
+      octx.fill();
+    });
+  }
 
-    octx.beginPath(); octx.arc(emaPoint.x,emaPoint.y,6,0,Math.PI*2); octx.fillStyle='rgba(255,255,0,0.9)'; octx.fill();
+  const hands = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  });
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+  });
 
-    const drawingNow = pinchDetector(lm);
-    statusEl.textContent = drawingNow?'Drawing…':'Hand detected';
+  hands.onResults((results)=>{
+    octx.clearRect(0,0,overlay.width,overlay.height);
 
-    if(drawingNow){
-      if(!currentStroke){ currentStroke={color:colorEl.value,size:parseInt(sizeEl.value),points:[]}; strokes.push(currentStroke);}
-      const p = {x:emaPoint.x, y:emaPoint.y};
-      const last = currentStroke.points[currentStroke.points.length-1];
-      currentStroke.points.push(p);
-      if(last){ ictx.strokeStyle=currentStroke.color; ictx.lineWidth=currentStroke.size; ictx.lineCap='round'; ictx.beginPath(); ictx.moveTo(last.x,last.y); ictx.lineTo(p.x,p.y); ictx.stroke();}
-    } else { currentStroke=null; emaPoint=null; }
-  } else { statusEl.textContent='Show your hand to the camera'; currentStroke=null; emaPoint=null; }
-});
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const lm = results.multiHandLandmarks[0];
+      const tip = toCanvasCoords(lm[8]);
 
-async function startCamera(){
-  statusEl.textContent='Requesting camera…';
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({ video:{facingMode:'user', width:{ideal:1280}, height:{ideal:720}}, audio:false});
-    video.srcObject=stream; await video.play();
-    const mpCam = new Camera(video,{ onFrame:async()=>{ resizeAll(); await hands.send({image:video}); }, width:1280, height:720 });
-    mpCam.start(); startGate.style.display='none'; statusEl.textContent='Camera OK — show your hand';
-  }catch(err){ console.error(err); statusEl.textContent='Camera error'; alert('Camera access failed: '+err.message);}
-}
-startBtn.addEventListener('click', startCamera);
+      // Draw hand skeleton and points
+      drawHandSkeleton(lm);
+
+      // Drawing
+      if (pinchActive(lm)) {
+        if (!drawing) {
+          drawing = true;
+          currentStroke = { color: colorEl.value, size: parseInt(sizeEl.value), points: [tip] };
+          strokes.push(currentStroke);
+        } else {
+          currentStroke.points.push(tip);
+          if (lastPos) drawLine(lastPos, tip, currentStroke.color, currentStroke.size);
+        }
+      } else {
+        drawing = false;
+        currentStroke = null;
+      }
+      lastPos = tip;
+    } else {
+      drawing = false;
+      currentStroke = null;
+      lastPos = null;
+    }
+  });
+
+  async function initCamera() {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: currentFacingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+      
+      video.srcObject = stream;
+      await video.play();
+      
+      // Initialize zoom control if available
+      const track = stream.getVideoTracks()[0];
+      if (track && typeof track.getCapabilities === 'function') {
+        const capabilities = track.getCapabilities();
+        if (capabilities.zoom) {
+          zoomEl.style.display = 'block';
+          zoomEl.min = capabilities.zoom.min * 100;
+          zoomEl.max = capabilities.zoom.max * 100;
+          const settings = track.getSettings();
+          zoomEl.value = settings.zoom ? settings.zoom * 100 : 100;
+        } else {
+          zoomEl.style.display = 'none';
+        }
+      } else {
+        zoomEl.style.display = 'none';
+      }
+      
+      // Start hand tracking
+      const camera = new Camera(video, {
+        onFrame: async () => { await hands.send({image: video}); },
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+      camera.start();
+      
+    } catch (err) {
+      console.error("Camera error:", err);
+      alert("Camera error: " + err.message);
+    }
+  }
+
+  // Initialize camera
+  initCamera();
 })();
 </script>
 </body>
