@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+/>
+<title>AirDraw — Fullscreen Hand Tracking</title>
+<style>
+  :root {
+    --panel-bg: rgba(15, 23, 42, 0.7);
+    --panel-border: rgba(255,255,255,0.12);
+    --text: #e5e7eb;
+    --muted: #94a3b8;
+    --accent: #7c3aed;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    background: #0b1220;
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  }
+  /* Fullscreen stage */
+  #stage {
+    position: fixed;
+    inset: 0;
+    width: 100vw; height: 100vh;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+  }
+  video, canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    touch-action: none;
+  }
+  /* Controls HUD */
+  .hud {
+    position: absolute; left: 12px; right: 12px; bottom: env(safe-area-inset-bottom, 12px);
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: center;
+    z-index: 10; pointer-events: none;
+  }
+  .pill, .btn {
+    pointer-events: auto;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(10px);
+    color: var(--text);
+    border-radius: 12px;
+  }
+  .pill {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    padding: 10px 14px; cursor: pointer; user-select: none;
+  }
+  .btn:active { transform: translateY(1px); }
+  .pill label { font-size: 12px; color: var(--muted); }
+  input[type="color"] { width: 36px; height: 36px; border: none; border-radius: 8px; background: transparent; }
+  input[type="range"] { width: 110px; }
+  .tagbar {
+    position: absolute; top: 10px; left: 10px;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center; z-index: 10;
+  }
+  .tag {
+    background: var(--panel-bg); border: 1px solid var(--panel-border);
+    padding: 6px 10px; border-radius: 999px; font-size: 12px; color: var(--muted);
+  }
+  /* Start overlay for iOS permission */
+  #startGate {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    background: linear-gradient(180deg, rgba(124,58,237,.2), rgba(2,6,23,.9));
+    z-index: 20;
+  }
+  #startGate .card {
+    background: rgba(2,6,23,.85); border: 1px solid var(--panel-border);
+    padding: 18px; border-radius: 14px; text-align: center; max-width: 360px;
+  }
+  #startGate h1 { margin: 0 0 8px; font-size: 18px; }
+  #startGate p  { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+  #startBtn { background: var(--accent); border: none; color: white; padding: 10px 16px; border-radius: 10px; cursor: pointer; }
+  @media (max-width: 768px) {
+    input[type="range"] { width: 140px; }
+    .btn { padding: 12px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <!-- Camera + layers -->
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="overlay"></canvas> <!-- landmarks + connectors -->
+  <canvas id="ink"></canvas>     <!-- drawing layer -->
+
+  <!-- Start gate (needed on iOS to unlock camera) -->
+  <div id="startGate">
+    <div class="card">
+      <h1>AirDraw</h1>
+      <p>Tap start, allow camera access, then <b>pinch thumb + index</b> to draw in the air.</p>
+      <button id="startBtn">Start Camera</button>
+    </div>
+  </div>
+
+  <!-- Top tags -->
+  <div class="tagbar">
+    <div class="tag">Pinch to draw</div>
+    <div class="tag"><span id="fps">FPS: —</span></div>
+    <div class="tag" id="status">Loading…</div>
+  </div>
+
+  <!-- Controls -->
+  <div class="hud">
+    <div class="pill">
+      <label>Color</label><input id="color" type="color" value="#7c3aed" />
+      <label>Size</label><input id="size" type="range" min="2" max="24" value="6" />
+      <label>Smooth</label><input id="smooth" type="checkbox" checked />
+      <label>Mirror</label><input id="mirror" type="checkbox" checked />
+    </div>
+    <button class="btn" id="undoBtn" title="Undo (U)">Undo</button>
+    <button class="btn" id="clearBtn" title="Clear (C)">Clear</button>
+    <button class="btn" id="saveBtn" title="Save (S)">Save</button>
+  </div>
+</div>
+
+<!-- MediaPipe deps -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<script>
+(() => {
+  // Elements
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const ink = document.getElementById('ink');
+  const octx = overlay.getContext('2d');
+  const ictx = ink.getContext('2d');
+
+  const startGate = document.getElementById('startGate');
+  const startBtn = document.getElementById('startBtn');
+  const colorEl = document.getElementById('color');
+  const sizeEl = document.getElementById('size');
+  const smoothEl = document.getElementById('smooth');
+  const mirrorEl = document.getElementById('mirror');
+  const undoBtn = document.getElementById('undoBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const saveBtn = document.getElementById('saveBtn');
+  const fpsEl = document.getElementById('fps');
+  const statusEl = document.getElementById('status');
+
+  // Canvas sizing
+  function resizeAll() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    overlay.width = w; overlay.height = h;
+    ink.width = w; ink.height = h;
+  }
+  window.addEventListener('resize', resizeAll);
+  window.addEventListener('orientationchange', () => setTimeout(resizeAll, 50));
+  resizeAll();
+
+  // Drawing state
+  let strokes = [];                // array of {color,size,points:[{x,y}]}
+  let currentStroke = null;
+  let lastPoint = null;
+  let pinchDown = false;           // debounced (hysteresis) pinch state
+  let emaPoint = null;             // smoothed point
+  const alpha = 0.35;              // EMA smoothing factor
+
+  // FPS tracker
+  let frames = 0, lastT = performance.now();
+  function tickFPS() {
+    frames++;
+    const now = performance.now();
+    if (now - lastT >= 1000) {
+      fpsEl.textContent = `FPS: ${frames}`;
+      frames = 0; lastT = now;
+    }
+  }
+
+  // Helpers
+  function applyMirror() {
+    video.style.transform = mirrorEl.checked ? 'scaleX(-1)' : 'scaleX(1)';
+  }
+  mirrorEl.addEventListener('change', applyMirror);
+  applyMirror();
+
+  function toCanvasXY(norm) {
+    // Mirror only X if mirror is enabled
+    let x = norm.x * overlay.width;
+    const y = norm.y * overlay.height;
+    if (mirrorEl.checked) x = overlay.width - x;
+    return { x, y };
+  }
+
+  // Hysteresis pinch detector: engage < START, release > END (prevents flicker)
+  function pinchDetector(landmarks) {
+    const t = landmarks[4], i = landmarks[8];
+    // Work in normalized space (0..1)
+    const dist = Math.hypot(t.x - i.x, t.y - i.y);
+    const START = Math.min(0.065, (window.innerWidth < 768 ? 0.08 : 0.065));
+    const END   = START + 0.02; // must separate fingers more to end drawing
+    if (!pinchDown && dist < START) pinchDown = true;
+    if (pinchDown && dist > END)    pinchDown = false;
+    return pinchDown;
+  }
+
+  function redrawAll() {
+    ictx.clearRect(0, 0, ink.width, ink.height);
+    ictx.lineCap = 'round'; ictx.lineJoin = 'round';
+    for (const s of strokes) {
+      if (s.points.length < 2) continue;
+      ictx.beginPath();
+      ictx.strokeStyle = s.color;
+      ictx.lineWidth = s.size;
+      for (let i = 1; i < s.points.length; i++) {
+        const a = s.points[i - 1], b = s.points[i];
+        ictx.moveTo(a.x, a.y); ictx.lineTo(b.x, b.y);
+      }
+      ictx.stroke();
+    }
+  }
+
+  undoBtn.onclick  = () => { strokes.pop(); redrawAll(); };
+  clearBtn.onclick = () => { strokes = []; redrawAll(); };
+  saveBtn.onclick  = () => {
+    // Composite current video + ink (respect mirror)
+    const w = ink.width, h = ink.height;
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const tctx = tmp.getContext('2d');
+
+    tctx.save();
+    if (mirrorEl.checked) { tctx.translate(w, 0); tctx.scale(-1, 1); }
+    tctx.drawImage(video, 0, 0, w, h);
+    tctx.restore();
+
+    tctx.drawImage(ink, 0, 0);
+
+    const a = document.createElement('a');
+    a.href = tmp.toDataURL('image/png');
+    a.download = 'airdraw.png';
+    a.click();
+  };
+
+  // MediaPipe Hands setup
+  const hands = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  });
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+  });
+
+  hands.onResults((res) => {
+    tickFPS();
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+
+    if (res.multiHandLandmarks && res.multiHandLandmarks.length) {
+      const lm = res.multiHandLandmarks[0];
+      const w = overlay.width, h = overlay.height;
+
+      // Draw connectors + landmarks (feedback)
+      // Use MediaPipe helpers (they ignore mirroring; we show visual only)
+      drawConnectors(octx, lm, HAND_CONNECTIONS, { lineWidth: 2 });
+      drawLandmarks(octx, lm, { lineWidth: 1, radius: 2 });
+
+      // Use index fingertip as drawing point
+      const tipCanvas = toCanvasXY(lm[8]);
+
+      // Smoothing (EMA)
+      if (!emaPoint) emaPoint = { ...tipCanvas };
+      if (smoothEl.checked) {
+        emaPoint.x += alpha * (tipCanvas.x - emaPoint.x);
+        emaPoint.y += alpha * (tipCanvas.y - emaPoint.y);
+      } else {
+        emaPoint = { ...tipCanvas };
+      }
+
+      // Fingertip cursor
+      octx.beginPath();
+      octx.arc(emaPoint.x, emaPoint.y, 6, 0, Math.PI * 2);
+      octx.fillStyle = 'rgba(255, 255, 0, 0.9)';
+      octx.fill();
+
+      // Pinch -> draw
+      const drawingNow = pinchDetector(lm);
+      statusEl.textContent = drawingNow ? 'Drawing…' : 'Hand detected';
+
+      if (drawingNow) {
+        if (!currentStroke) {
+          currentStroke = { color: colorEl.value, size: parseInt(sizeEl.value, 10), points: [] };
+          strokes.push(currentStroke);
+        }
+        const p = { x: emaPoint.x, y: emaPoint.y };
+        const last = currentStroke.points[currentStroke.points.length - 1];
+        currentStroke.points.push(p);
+
+        // Incremental segment for responsiveness
+        if (last) {
+          ictx.strokeStyle = currentStroke.color;
+          ictx.lineWidth = currentStroke.size;
+          ictx.lineCap = 'round';
+          ictx.beginPath();
+          ictx.moveTo(last.x, last.y);
+          ictx.lineTo(p.x, p.y);
+          ictx.stroke();
+        }
+        lastPoint = p;
+      } else {
+        currentStroke = null;
+        lastPoint = null;
+      }
+    } else {
+      statusEl.textContent = 'Show your hand to the camera';
+      currentStroke = null; lastPoint = null; emaPoint = null;
+    }
+  });
+
+  // Start camera only after user gesture (mobile requirement)
+  async function startCamera() {
+    statusEl.textContent = 'Requesting camera…';
+    try {
+      const constraints = {
+        video: {
+          facingMode: 'user', // change to 'environment' if you prefer rear camera on phones
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+      await video.play();
+
+      // MediaPipe Camera pump
+      const mpCam = new Camera(video, {
+        onFrame: async () => {
+          // Keep canvases matched to display size
+          if (overlay.width !== overlay.clientWidth || overlay.height !== overlay.clientHeight) {
+            resizeAll();
+          }
+          await hands.send({ image: video });
+        },
+        width: 1280,
+        height: 720
+      });
+      mpCam.start();
+
+      startGate.style.display = 'none';
+      statusEl.textContent = 'Camera OK — show your hand';
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Camera error';
+      alert('Camera access failed: ' + err.message);
+    }
+  }
+
+  startBtn.addEventListener('click', startCamera);
+
+  // Keyboard shortcuts (desktop convenience)
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'u') undoBtn.click();
+    if (k === 'c') clearBtn.click();
+    if (k === 's') saveBtn.click();
+    if (k === 'm') { mirrorEl.checked = !mirrorEl.checked; applyMirror(); }
+  });
+})();
+</script>
+</body>
+</html>
