@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,13 +9,15 @@
     margin: 0; padding: 0;
     height: 100%; background: black;
     overflow: hidden;
+    font-family: Arial, sans-serif;
   }
   video, canvas {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain; /* Fixed zoom issue */
+    background: black;
   }
   #controls {
     position: fixed;
@@ -43,9 +44,32 @@
     border-radius: 8px;
     min-width: 70px;
   }
+  #access-msg {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    color: white;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 20;
+    font-size: 20px;
+    text-align: center;
+  }
+  #access-msg button {
+    margin-top: 20px;
+    padding: 10px 20px;
+    font-size: 18px;
+  }
 </style>
 </head>
 <body>
+
+<div id="access-msg">
+  <div>🔒 Professional Access Required<br>Allow camera to use AirDraw</div>
+  <button id="allowCamera">Allow Camera</button>
+</div>
 
 <video id="input" playsinline></video>
 <canvas id="overlay"></canvas>
@@ -57,7 +81,7 @@
   <button id="undoBtn">Undo</button>
   <button id="clearBtn">Clear</button>
   <button id="saveBtn">Save</button>
-  <button><a href="./camera.html">New Camera</a></button>
+  <button><a href="./camera.html" style="color:white; text-decoration:none;">New Camera</a></button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
@@ -66,181 +90,175 @@
 
 <script>
 (async function(){
-  const video = document.getElementById('input');
-  const overlay = document.getElementById('overlay');
-  const ink = document.getElementById('ink');
-  const octx = overlay.getContext('2d');
-  const ictx = ink.getContext('2d');
+  const accessMsg = document.getElementById('access-msg');
+  const allowBtn = document.getElementById('allowCamera');
 
-  const colorEl = document.getElementById('color');
-  const sizeEl = document.getElementById('size');
-  const undoBtn = document.getElementById('undoBtn');
-  const clearBtn = document.getElementById('clearBtn');
-  const saveBtn = document.getElementById('saveBtn');
+  allowBtn.onclick = async () => {
+    accessMsg.style.display = 'none';
+    startAirDraw();
+  };
 
-  let strokes = [];
-  let currentStroke = null;
-  let lastPos = null;
-  let drawing = false;
+  async function startAirDraw() {
+    const video = document.getElementById('input');
+    const overlay = document.getElementById('overlay');
+    const ink = document.getElementById('ink');
+    const octx = overlay.getContext('2d');
+    const ictx = ink.getContext('2d');
 
-  function resizeCanvas(){
-    overlay.width = window.innerWidth;
-    overlay.height = window.innerHeight;
-    ink.width = window.innerWidth;
-    ink.height = window.innerHeight;
-  }
-  window.addEventListener('resize', resizeCanvas);
-  resizeCanvas();
+    const colorEl = document.getElementById('color');
+    const sizeEl = document.getElementById('size');
+    const undoBtn = document.getElementById('undoBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const saveBtn = document.getElementById('saveBtn');
 
-  function toCanvasCoords(norm) {
-    return {
-      x: norm.x * overlay.width,
-      y: norm.y * overlay.height
+    let strokes = [];
+    let currentStroke = null;
+    let lastPos = null;
+    let drawing = false;
+
+    function resizeCanvas(){
+      overlay.width = window.innerWidth;
+      overlay.height = window.innerHeight;
+      ink.width = window.innerWidth;
+      ink.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function toCanvasCoords(norm) {
+      return { x: norm.x * overlay.width, y: norm.y * overlay.height };
+    }
+
+    function pinchActive(landmarks) {
+      const t = landmarks[4];
+      const i = landmarks[8];
+      const dx = t.x - i.x;
+      const dy = t.y - i.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      return dist < 0.06;
+    }
+
+    function drawLine(p1, p2, color, size) {
+      ictx.strokeStyle = color;
+      ictx.lineWidth = size;
+      ictx.lineCap = "round";
+      ictx.beginPath();
+      ictx.moveTo(p1.x, p1.y);
+      ictx.lineTo(p2.x, p2.y);
+      ictx.stroke();
+    }
+
+    undoBtn.onclick = () => { strokes.pop(); redrawAll(); };
+    clearBtn.onclick = () => { strokes = []; ictx.clearRect(0,0,ink.width,ink.height); };
+    saveBtn.onclick = () => {
+      const link = document.createElement('a');
+      const merged = document.createElement('canvas');
+      merged.width = ink.width;
+      merged.height = ink.height;
+      const mctx = merged.getContext('2d');
+      mctx.drawImage(video, 0, 0, merged.width, merged.height);
+      mctx.drawImage(ink, 0, 0);
+      link.href = merged.toDataURL("image/png");
+      link.download = "airdraw.png";
+      link.click();
     };
-  }
 
-  function pinchActive(landmarks) {
-    const t = landmarks[4];
-    const i = landmarks[8];
-    const dx = t.x - i.x;
-    const dy = t.y - i.y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    return dist < 0.06;
-  }
-
-  function drawLine(p1, p2, color, size) {
-    ictx.strokeStyle = color;
-    ictx.lineWidth = size;
-    ictx.lineCap = "round";
-    ictx.beginPath();
-    ictx.moveTo(p1.x, p1.y);
-    ictx.lineTo(p2.x, p2.y);
-    ictx.stroke();
-  }
-
-  undoBtn.onclick = () => {
-    strokes.pop();
-    redrawAll();
-  };
-  clearBtn.onclick = () => {
-    strokes = [];
-    ictx.clearRect(0,0,ink.width,ink.height);
-  };
-  saveBtn.onclick = () => {
-    const link = document.createElement('a');
-    const merged = document.createElement('canvas');
-    merged.width = ink.width;
-    merged.height = ink.height;
-    const mctx = merged.getContext('2d');
-    mctx.drawImage(video, 0, 0, merged.width, merged.height);
-    mctx.drawImage(ink, 0, 0);
-    link.href = merged.toDataURL("image/png");
-    link.download = "airdraw.png";
-    link.click();
-  };
-
-  function redrawAll(){
-    ictx.clearRect(0,0,ink.width,ink.height);
-    for (const s of strokes) {
-      for (let i = 1; i < s.points.length; i++) {
-        drawLine(s.points[i-1], s.points[i], s.color, s.size);
+    function redrawAll(){
+      ictx.clearRect(0,0,ink.width,ink.height);
+      for (const s of strokes) {
+        for (let i = 1; i < s.points.length; i++) {
+          drawLine(s.points[i-1], s.points[i], s.color, s.size);
+        }
       }
     }
-  }
 
-  function drawHandSkeleton(lm){
-    octx.lineWidth = 2;
-    octx.strokeStyle = "rgba(0,255,255,0.6)";
-    octx.fillStyle = "rgba(255,255,0,0.9)";
-    // Draw connections
-    const fingers = [
-      [0,1,2,3,4],
-      [0,5,6,7,8],
-      [0,9,10,11,12],
-      [0,13,14,15,16],
-      [0,17,18,19,20]
-    ];
-    fingers.forEach(f=>{
-      for(let i=0;i<f.length-1;i++){
-        const p1 = toCanvasCoords(lm[f[i]]);
-        const p2 = toCanvasCoords(lm[f[i+1]]);
-        octx.beginPath();
-        octx.moveTo(p1.x, p1.y);
-        octx.lineTo(p2.x, p2.y);
-        octx.stroke();
-      }
-    });
-    // Draw points
-    lm.forEach((pt, index) => {
-      const pos = toCanvasCoords(pt);
-      octx.beginPath();
-      octx.arc(pos.x, pos.y, index===8 || index===4 ? 6 : 4, 0, Math.PI*2);
-      octx.fill();
-    });
-  }
-
-  const hands = new Hands({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-  });
-  hands.setOptions({
-    maxNumHands: 1,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.6,
-    minTrackingConfidence: 0.6
-  });
-
-  hands.onResults((results)=>{
-    octx.clearRect(0,0,overlay.width,overlay.height);
-
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      const lm = results.multiHandLandmarks[0];
-      const tip = toCanvasCoords(lm[8]);
-
-      // Draw hand skeleton and points
-      drawHandSkeleton(lm);
-
-      // Drawing
-      if (pinchActive(lm)) {
-        if (!drawing) {
-          drawing = true;
-          currentStroke = { color: colorEl.value, size: parseInt(sizeEl.value), points: [tip] };
-          strokes.push(currentStroke);
-        } else {
-          currentStroke.points.push(tip);
-          if (lastPos) drawLine(lastPos, tip, currentStroke.color, currentStroke.size);
+    function drawHandSkeleton(lm){
+      octx.clearRect(0,0,overlay.width,overlay.height);
+      octx.lineWidth = 2;
+      octx.strokeStyle = "rgba(0,255,255,0.6)";
+      octx.fillStyle = "rgba(255,255,0,0.9)";
+      const fingers = [
+        [0,1,2,3,4],
+        [0,5,6,7,8],
+        [0,9,10,11,12],
+        [0,13,14,15,16],
+        [0,17,18,19,20]
+      ];
+      fingers.forEach(f=>{
+        for(let i=0;i<f.length-1;i++){
+          const p1 = toCanvasCoords(lm[f[i]]);
+          const p2 = toCanvasCoords(lm[f[i+1]]);
+          octx.beginPath();
+          octx.moveTo(p1.x, p1.y);
+          octx.lineTo(p2.x, p2.y);
+          octx.stroke();
         }
+      });
+      lm.forEach((pt,index)=>{
+        const pos = toCanvasCoords(pt);
+        octx.beginPath();
+        octx.arc(pos.x,pos.y,index===8||index===4?6:4,0,Math.PI*2);
+        octx.fill();
+      });
+    }
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands:1,
+      modelComplexity:1,
+      minDetectionConfidence:0.6,
+      minTrackingConfidence:0.6
+    });
+
+    hands.onResults((results)=>{
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const lm = results.multiHandLandmarks[0];
+        const tip = toCanvasCoords(lm[8]);
+        drawHandSkeleton(lm);
+
+        if (pinchActive(lm)) {
+          if (!drawing) {
+            drawing = true;
+            currentStroke = { color: colorEl.value, size: parseInt(sizeEl.value), points: [tip] };
+            strokes.push(currentStroke);
+          } else {
+            currentStroke.points.push(tip);
+            if (lastPos) drawLine(lastPos, tip, currentStroke.color, currentStroke.size);
+          }
+        } else {
+          drawing = false;
+          currentStroke = null;
+        }
+        lastPos = tip;
       } else {
         drawing = false;
         currentStroke = null;
+        lastPos = null;
+        octx.clearRect(0,0,overlay.width,overlay.height);
       }
-      lastPos = tip;
-    } else {
-      drawing = false;
-      currentStroke = null;
-      lastPos = null;
-    }
-  });
+    });
 
-  const camera = new Camera(video, {
-    onFrame: async () => { await hands.send({image: video}); },
-    width: window.innerWidth,
-    height: window.innerHeight
-  });
+    const camera = new Camera(video,{
+      onFrame: async()=>{ await hands.send({image: video}); },
+      width: window.innerWidth,
+      height: window.innerHeight
+    });
 
-  navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: "user",
-      width: { ideal: 1920 },
-      height: { ideal: 1080 }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode:"user", width:{ideal:1920}, height:{ideal:1080} }
+      });
+      video.srcObject = stream;
+      await video.play();
+      camera.start();
+    } catch(err) {
+      alert("Camera error: " + err);
     }
-  }).then(stream => {
-    video.srcObject = stream;
-    video.play();
-    camera.start();
-  }).catch(err => {
-    alert("Camera error: " + err);
-  });
+  }
 })();
 </script>
+
 </body>
 </html>
